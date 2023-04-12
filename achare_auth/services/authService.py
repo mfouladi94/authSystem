@@ -13,6 +13,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from useraccount.models import *
+from ..models import *
 
 
 # Response code 100 == success resopnse
@@ -32,22 +33,30 @@ from useraccount.models import *
 
 def auth_mobile(data, request):
     mobile_number = data["mobile"].strip()
+
     # step 1 check user existence with phone number
     if data["code"] == 1:
 
         userprofile = UserProfile.objects.filter(mobile_number=mobile_number).first()
-
+        ft = generate_flow_token(mobile_number)
         # Register the user
         if not check_user_is_registered_successfully(mobile_number):
-            return Response({"code": 102, "error": "", "message": "ثبت نام شما انجام شد و کد برای شما ارسال شد "},
+            return Response({"code": 102, "flowToken": ft.code, "error": "",
+                             "message": "ثبت نام شما انجام شد و کد برای شما ارسال شد "},
                             status=status.HTTP_200_OK)
 
-        return Response({"code": 100, "error": "", "message": "کلمه عبور خود را وارد کنید "}, status=status.HTTP_200_OK)
+        return Response({"code": 100, "flowToken": ft.code, "error": "", "message": "کلمه عبور خود را وارد کنید "},
+                        status=status.HTTP_200_OK)
     # step 2 login user with phone number and password
     elif data["code"] == 2:
 
-        if "password" not in data or len(data["password"]) >= 30:
+        if "password" not in data or len(data["password"]) >= 30 :
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        if not flow_token:
+            return Response({"code": 10009, 'error': 'flow token is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         # Register the user
         if not check_user_is_registered_successfully(mobile_number):
@@ -75,6 +84,11 @@ def auth_mobile(data, request):
         if "smsToken" not in data or len(data["smsToken"]) != 6:
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
+        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        if not flow_token:
+            return Response({"code": 10009, 'error': 'flow token is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         if read_sms_token(mobile_number) != data["smsToken"]:
             # Register the user
             if not check_user_is_registered_successfully(mobile_number):
@@ -84,6 +98,10 @@ def auth_mobile(data, request):
         userprofile = UserProfile.objects.filter(mobile_number=mobile_number).first()
         userprofile.is_register_auth_completed = True
         userprofile.save()
+
+        flow_token.is_verified = True
+        flow_token.save()
+
         if not userprofile.is_register_data_completed:
             return Response({"code": 104, "error": "", "message": "مشخصات کاربری خود را وارد کنید "},
                             status=status.HTTP_200_OK)
@@ -96,6 +114,15 @@ def auth_mobile(data, request):
     elif data["code"] == 4:
         if "u_name" not in data or "u_family" not in data or "u_email" not in data or "password" not in data:
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
+
+        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        if not flow_token:
+            return Response({"code": 10009, 'error': 'flow token is required'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not flow_token.is_verified:
+            return Response({"code": 10009, 'error': 'اعتبار سنجی پیامکی انجام نشده است . لطفا دوباره تلاش کنید'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         userprofile = UserProfile.objects.filter(mobile_number=mobile_number).first()
 
@@ -125,7 +152,6 @@ def auth_mobile(data, request):
         else:
             return Response({"code": 10009, 'error': 'Invalid username or password', 'errors': serializer.errors},
                             status=status.HTTP_400_BAD_REQUEST)
-
 
 
 # Generate an SMS token
@@ -174,3 +200,14 @@ def check_user_is_registered_successfully(mobile_number):
         return False
 
     return True
+
+
+def generate_flow_token(mobile_number):
+    flowToken = FlowToken.objects.create(mobile_number=mobile_number)
+    flowToken.save()
+    return flowToken
+
+
+def get_flow_token(flowtoenId , mobile):
+    flowToken = FlowToken.objects.filter(code=flowtoenId , mobile_number=mobile).first()
+    return flowToken
