@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'achare_auth.apps.AchareAuthConfig',
+    'rest_framework',
 ]
 
 MIDDLEWARE = [
