@@ -1,6 +1,8 @@
 import json
 import random
 
+from django.utils import timezone
+from datetime import timedelta
 from django.contrib.auth import authenticate
 from django.core.cache import cache
 from django.shortcuts import render
@@ -34,6 +36,13 @@ from ..models import *
 def auth_mobile(data, request):
     mobile_number = data["mobile"].strip()
 
+    # Check if IP address is banned
+    ip_address = request.META.get('REMOTE_ADDR', None)
+    if is_ip_banned(ip_address):
+        # IP address is banned, take appropriate action
+        return Response({"code": 10009, 'error': 'درحال حاضر امکان تراکنش برای شما وجود ندارد '},
+                        status=status.HTTP_400_BAD_REQUEST)
+
     # step 1 check user existence with phone number
     if data["code"] == 1:
 
@@ -50,10 +59,10 @@ def auth_mobile(data, request):
     # step 2 login user with phone number and password
     elif data["code"] == 2:
 
-        if "password" not in data or len(data["password"]) >= 30 :
+        if "password" not in data or len(data["password"]) >= 30:
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        flow_token = get_flow_token(data["flowToken"], mobile_number)
         if not flow_token:
             return Response({"code": 10009, 'error': 'flow token is required'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -75,6 +84,7 @@ def auth_mobile(data, request):
             return Response({"code": 100, 'token': token.key},
                             status=status.HTTP_201_CREATED)  # Return token as response
         else:
+            handle_failed_login_attempt(request, userprofile.user.username)
             return Response({"code": 10009, 'error': 'Invalid username or password'},
                             status=status.HTTP_400_BAD_REQUEST)
 
@@ -84,14 +94,19 @@ def auth_mobile(data, request):
         if "smsToken" not in data or len(data["smsToken"]) != 6:
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        flow_token = get_flow_token(data["flowToken"], mobile_number)
         if not flow_token:
             return Response({"code": 10009, 'error': 'flow token is required'},
                             status=status.HTTP_400_BAD_REQUEST)
 
+        userprofile = UserProfile.objects.filter(mobile_number=mobile_number).first()
+
         if read_sms_token(mobile_number) != data["smsToken"]:
             # Register the user
             if not check_user_is_registered_successfully(mobile_number):
+
+                handle_failed_login_attempt(request, userprofile.user.username)
+
                 return Response({"code": 10009, "error": "کد وارد شده صحیح نیست مجدد کد ارسال شد"},
                                 status=status.HTTP_400_BAD_REQUEST)
 
@@ -115,7 +130,7 @@ def auth_mobile(data, request):
         if "u_name" not in data or "u_family" not in data or "u_email" not in data or "password" not in data:
             return Response({"code": 10009, "error": "Not valid parameters"}, status=status.HTTP_400_BAD_REQUEST)
 
-        flow_token = get_flow_token(data["flowToken"] , mobile_number)
+        flow_token = get_flow_token(data["flowToken"], mobile_number)
         if not flow_token:
             return Response({"code": 10009, 'error': 'flow token is required'},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -152,6 +167,20 @@ def auth_mobile(data, request):
         else:
             return Response({"code": 10009, 'error': 'Invalid username or password', 'errors': serializer.errors},
                             status=status.HTTP_400_BAD_REQUEST)
+
+
+def handle_failed_login_attempt(request, username):
+    ip_address = request.META.get('REMOTE_ADDR', None)
+    failed_login_attempt = FailedLoginAttempt.objects.create(ip_address=ip_address, username=username)
+    failed_login_attempt.save()
+
+
+def is_ip_banned(ip_address):
+    now = timezone.now()
+    time_threshold = now - timedelta(hours=1)  # 1 hour ago
+    failed_attempts = FailedLoginAttempt.objects.filter(ip_address=ip_address, timestamp__gte=time_threshold)
+    return failed_attempts.count() >= 3
+
 
 
 # Generate an SMS token
@@ -208,6 +237,6 @@ def generate_flow_token(mobile_number):
     return flowToken
 
 
-def get_flow_token(flowtoenId , mobile):
-    flowToken = FlowToken.objects.filter(code=flowtoenId , mobile_number=mobile).first()
+def get_flow_token(flowtoenId, mobile):
+    flowToken = FlowToken.objects.filter(code=flowtoenId, mobile_number=mobile).first()
     return flowToken

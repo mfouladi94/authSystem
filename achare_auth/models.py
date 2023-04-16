@@ -25,3 +25,12 @@ class FlowToken(models.Model):
         chars = string.ascii_uppercase + string.digits
         code = ''.join(random.choice(chars) for _ in range(code_length))
         return code
+
+
+class FailedLoginAttempt(models.Model):
+    ip_address = models.CharField(max_length=15)
+    username = models.CharField(max_length=150)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+
+
